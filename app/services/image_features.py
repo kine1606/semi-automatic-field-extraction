@@ -1,19 +1,24 @@
-from PIL import Image
+import numpy as np
+from app.services.image_cache import load_rgb_array
 
 
-def estimate_green_ratio(image_path: str) -> float:
-    try:
-        img = Image.open(image_path).convert("RGB")
-        img = img.resize((200, 200))
+def estimate_green_ratio(path: str) -> float:
+    """
+    Fast, vectorized green-ratio estimate.
+    Samples the image instead of scanning every pixel.
+    """
+    rgb = load_rgb_array(path)
 
-        total = 0
-        green_like = 0
+    # downsample cheaply by slicing
+    h, w = rgb.shape[:2]
+    step_y = max(1, h // 200)
+    step_x = max(1, w // 200)
+    sample = rgb[::step_y, ::step_x]
 
-        for r, g, b in img.getdata():
-            total += 1
-            if g > r + 20 and g > b + 20 and g > 70:
-                green_like += 1
+    r = sample[:, :, 0].astype(np.int16)
+    g = sample[:, :, 1].astype(np.int16)
+    b = sample[:, :, 2].astype(np.int16)
 
-        return green_like / total if total else 0.0
-    except Exception:
-        return 0.0
+    green_like = (g > r + 20) & (g > b + 20) & (g > 70)
+
+    return float(green_like.mean())

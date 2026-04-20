@@ -1,70 +1,72 @@
-from typing import Any
+from typing import Optional, Dict
 
-import cv2
+import numpy as np
+from PIL import Image
 
+from app.services.image_cache import load_rgb_array, load_gray_array
 
-def _detect_qr_with_opencv(image) -> dict[str, str] | None:
-    detector = cv2.QRCodeDetector()
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
-    # Try multi-QR first.
-    ok, decoded_info, _, _ = detector.detectAndDecodeMulti(image)
-    if ok and decoded_info:
-        for value in decoded_info:
-            if value:
-                return {"format": "QR_CODE", "value": value}
-
-    # Fallback to single QR decode.
-    value, _, _ = detector.detectAndDecode(image)
-    if value:
-        return {"format": "QR_CODE", "value": value}
-
-    return None
+try:
+    from pyzbar.pyzbar import decode as zbar_decode
+except ImportError:
+    zbar_decode = None
 
 
-def _detect_barcode_with_opencv(image) -> dict[str, str] | None:
-    # OpenCV barcode API availability depends on build/version.
-    if not hasattr(cv2, "barcode_BarcodeDetector"):
+def _detect_qr_opencv(rgb: np.ndarray) -> Optional[Dict]:
+    if cv2 is None:
         return None
 
-    detector = cv2.barcode_BarcodeDetector()
-
-    # Handle different return signatures across OpenCV versions.
-    result = detector.detectAndDecode(image)
-    if not isinstance(result, tuple):
-        return None
-
-    decoded_values: list[str] = []
-    decoded_types: list[Any] = []
-
-    for item in result:
-        if isinstance(item, (list, tuple)):
-            if item and isinstance(item[0], str):
-                decoded_values = [v for v in item if isinstance(v, str)]
-            elif item:
-                decoded_types = list(item)
-
-    for idx, value in enumerate(decoded_values):
-        if value:
-            barcode_type = str(decoded_types[idx]) if idx < len(decoded_types) else "BARCODE"
-            return {"format": barcode_type, "value": value}
-
-    return None
-
-
-def detect_barcode_or_qr(image_path: str) -> dict[str, str] | None:
     try:
-        image = cv2.imread(image_path)
-        if image is None:
-            return None
+        detector = cv2.QRCodeDetector()
 
-        qr_result = _detect_qr_with_opencv(image)
-        if qr_result:
-            return qr_result
+        # OpenCV wants BGR for some flows, but QR detector works fine on RGB/gray too.
+        data, points, _ = detector.detectAndDecode(rgb)
+        if data:
+            return {"format": "QR_CODE", "value": data}
 
-        barcode_result = _detect_barcode_with_opencv(image)
-        if barcode_result:
-            return barcode_result
+        ok, decoded_info, points, _ = detector.detectAndDecodeMulti(rgb)
+        if ok and decoded_info:
+            first = next((x for x in decoded_info if x), None)
+            if first:
+                return {"format": "QR_CODE", "value": first}
+    except Exception as e:
+        print("QR ERROR:", repr(e))
 
+    return None
+
+
+def _detect_barcode_pyzbar(gray: np.ndarray) -> Optional[Dict]:
+    if zbar_decode is None:
         return None
-    except Exception:
-        return None
+
+    try:
+        decoded = zbar_decode(Image.fromarray(gray))
+        if decoded:
+            item = decoded[0]
+            return {
+                "format": getattr(item, "type", "BARCODE"),
+                "value": item.data.decode("utf-8", errors="ignore"),
+            }
+    except Exception as e:
+        print("BARCODE ERROR:", repr(e))
+
+    return None
+
+
+def detect_barcode_or_qr(path: str) -> Optional[Dict]:
+    """
+    Fast path:
+    1) QR via OpenCV
+    2) barcode/QR via pyzbar
+    """
+    rgb = load_rgb_array(path)
+    qr_result = _detect_qr_opencv(rgb)
+    if qr_result:
+        return qr_result
+
+    gray = load_gray_array(path)
+    return _detect_barcode_pyzbar(gray)
