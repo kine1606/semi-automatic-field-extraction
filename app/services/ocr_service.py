@@ -46,9 +46,6 @@ def _run_ocr(img: Image.Image, config: str) -> str:
 
 
 def extract_text_fast(path: str) -> str:
-    """
-    Stage B OCR: one cheap grayscale pass.
-    """
     img = _resize_for_ocr(_open_rgb(path), max_side=1200)
     gray = ImageOps.grayscale(img)
     gray = ImageEnhance.Contrast(gray).enhance(2.0)
@@ -56,9 +53,6 @@ def extract_text_fast(path: str) -> str:
 
 
 def extract_text_variants(path: str) -> Dict[str, str]:
-    """
-    Stage C / fallback OCR: only call this when needed.
-    """
     img = _resize_for_ocr(_open_rgb(path), max_side=1400)
 
     rgb = img
